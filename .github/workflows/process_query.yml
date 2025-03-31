@@ -1,0 +1,38 @@
+name: Processa Issue com Queries SQL
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v3
+
+      - name: Configura Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Instala dependências
+        run: |
+          pip install pandas
+
+      - name: Executa o processador de queries
+        id: process
+        run: python process_query.py
+
+      - name: Publica comentário na issue com a query final
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const finalSQL = fs.readFileSync('output.sql', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "Processamento concluído. Confira a query final gerada:\n\n```sql\n" + finalSQL + "\n```"
+            });
