@@ -1,6 +1,7 @@
 import os
 import re
-import requests
+import http.client
+import json
 
 # Captura variáveis do ambiente definidas pelo GitHub Actions
 issue_number = os.getenv("ISSUE_NUMBER")
@@ -47,13 +48,25 @@ output_filename = f"{table_name}.sql"
 with open(output_filename, "w") as file:
     file.write(final_query)
 
-# Enviar comentário na issue com a query final
-comment_url = f"https://api.github.com/repos/{repo_name}/issues/{issue_number}/comments"
-headers = {"Authorization": f"token {github_token}"}
-data = {"body": log_message}
+# Enviar comentário na issue com a query final usando http.client
+comment_url = f"/repos/{repo_name}/issues/{issue_number}/comments"
+headers = {
+    "Authorization": f"token {github_token}",
+    "Content-Type": "application/json"
+}
+data = {
+    "body": log_message
+}
+json_data = json.dumps(data)
 
-response = requests.post(comment_url, json=data, headers=headers)
-if response.status_code == 201:
+# Conectar ao GitHub API
+conn = http.client.HTTPSConnection("api.github.com")
+conn.request("POST", comment_url, body=json_data, headers=headers)
+
+response = conn.getresponse()
+if response.status == 201:
     print("✅ Comentário postado com sucesso!")
 else:
-    print(f"⚠️ Erro ao postar comentário: {response.text}")
+    print(f"⚠️ Erro ao postar comentário: {response.read().decode()}")
+
+conn.close()
