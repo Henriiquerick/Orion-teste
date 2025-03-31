@@ -12,10 +12,17 @@ jobs:
       - name: Clonar repositório
         uses: actions/checkout@v3
 
+      - name: Verificar variáveis de ambiente
+        run: |
+          echo "ISSUE_NUMBER: $ISSUE_NUMBER"
+          echo "ISSUE_BODY: $ISSUE_BODY"
+          echo "REPO_NAME: $REPO_NAME"
+          echo "GITHUB_TOKEN: $GITHUB_TOKEN"
+
       - name: Configurar ambiente Python
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt  # Caso tenha dependências adicionais
+          pip install -r requirements.txt
           
       - name: Executar script de processamento
         run: python process_query.py
