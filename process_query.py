@@ -49,14 +49,10 @@ with open(output_filename, "w") as file:
     file.write(final_query)
 
 # Enviar comentário na issue com a query final usando http.client
-comment_url = f"/repos/{repo_name}/issues/{issue_number}/comments"
-headers = {
-    "Authorization": f"token {github_token}",
-    "Content-Type": "application/json"
-}
-data = {
-    "body": log_message
-}
+comment_url = f"https://api.github.com/repos/{repo_name}/issues/{issue_number}/comments"
+headers = {"Authorization": f"token {github_token}"}
+data = {"body": log_message}
+
 json_data = json.dumps(data)
 
 # Conectar ao GitHub API
