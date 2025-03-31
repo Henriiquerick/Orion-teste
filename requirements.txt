@@ -1,6 +1,0 @@
-requests
-pandas
-sqlparse
-http.client
-json
-re
