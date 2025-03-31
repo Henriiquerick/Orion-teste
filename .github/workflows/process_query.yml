@@ -4,29 +4,16 @@ on:
   issues:
     types: [opened]
 
-permissions:
-  contents: write
-  issues: write
-
 jobs:
   process_queries:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout do código
+      - name: Clonar repositório
         uses: actions/checkout@v3
 
-      - name: Configurar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
       - name: Instalar dependências
-        run: pip install pandas
+        run: pip install -r requirements.txt
 
-      - name: Executar script Python para processar queries
-        env:
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO_NAME: ${{ github.repository }}
+      - name: Executar script de processamento
         run: python process_query.py
