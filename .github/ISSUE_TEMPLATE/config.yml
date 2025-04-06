@@ -7,4 +7,4 @@ issue_templates:
     title: "[União de Queries] Nome da Tabela Final Aqui"
     labels: ["automacao", "sql", "uniao"]
     assignees: []
-    file: sql_query_template.md
+    file: uniao-queries-template.md
