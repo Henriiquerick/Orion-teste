@@ -15,7 +15,7 @@ class QueryExtractor:
     
     def __init__(self, token: str):
         """
-        Inicializa o extrator de queries.
+        Inicializa o extrator de queries
         
         Args:
             token: Token de autenticação do GitHub
