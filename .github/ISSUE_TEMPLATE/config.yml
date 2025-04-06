@@ -1,0 +1,10 @@
+blank_issues_enabled: false
+contact_links: []
+
+issue_templates:
+  - name: União de Queries SQL
+    description: Solicitação para unir queries SQL dinamicamente via automação
+    title: "[União de Queries] Nome da Tabela Final Aqui"
+    labels: ["automacao", "sql", "uniao"]
+    assignees: []
+    file: sql_query_template.md
