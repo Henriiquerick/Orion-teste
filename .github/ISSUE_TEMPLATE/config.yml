@@ -5,6 +5,6 @@ issue_templates:
   - name: União de Queries SQL
     description: Solicitação para unir queries SQL dinamicamente via automação
     title: "[União de Queries] Nome da Tabela Final Aqui"
-    labels: ["automacao", "sql", "uniao"]
+    labels: ["automacao", "sql", "uniao", "sql-query"]
     assignees: []
     file: uniao-queries-template.md
