@@ -32,3 +32,6 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: python process_query.py
+      
+      - name: Mostrar conteúdo do arquivo
+        run: cat process_query.py
