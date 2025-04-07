@@ -127,13 +127,14 @@ class SQLProcessor:
                 else:
                     parts = [p for p in col.split() if p]
                     if len(parts) > 1 and not re.search(r"[\(\)]", parts[-1]):
-                        column = ' '.join(parts[:-1]).strip()
+                        column = " ".join(parts[:-1]).strip()
                         alias = parts[-1].strip('"`')
                     else:
                         column = col.strip()
-                        # Evitar f-string com \ diretamente, usar strip separadamente
+                        # Separar a lógica de strip para evitar problemas com f-strings
                         if '.' in column and '(' not in column:
-                            alias = column.split('.')[-1].strip('"`')
+                            alias = column.split('.')[-1]
+                            alias = alias.strip('"`')
                         else:
                             alias = column.strip('"`')
                 
@@ -142,7 +143,7 @@ class SQLProcessor:
             return result
             
         except Exception as e:
-            logger.error(f"Erro ao analisar colunas da query: {str(e)}")
+            logger.error(f"Erro ao analisar colunas da query: {e}")
             return []
     
     def fix_simple_syntax_errors(self, query: str) -> str:
@@ -162,13 +163,13 @@ class SQLProcessor:
         query = re.sub(r'\s+', ' ', query)
         
         common_mistakes = {
-            r'\bSELETC\b': 'SELECT',
-            r'\bFROM\s+FROM\b': 'FROM',
-            r'\bWEHRE\b': 'WHERE',
-            r'\bGROUPP\s+BY\b': 'GROUP BY',
-            r'\bORDER\s+BYY\b': 'ORDER BY',
-            r'\bJOIN\s+JOIN\b': 'JOIN',
-            r'\bINNER\s+INNER\b': 'INNER',
+            r'SELETC\b': 'SELECT',
+            r'FROM\s+FROM\b': 'FROM',
+            r'WEHRE\b': 'WHERE',
+            r'GROUPP\s+BY\b': 'GROUP BY',
+            r'ORDER\s+BYY\b': 'ORDER BY',
+            r'JOIN\s+JOIN\b': 'JOIN',
+            r'INNER\s+INNER\b': 'INNER',
         }
         
         for mistake, correction in common_mistakes.items():
@@ -209,7 +210,7 @@ class SQLProcessor:
         
         for i, (query_idx, columns) in enumerate(all_column_sets):
             query = fixed_queries[query_idx]
-            cte_name = f"cte{query_idx+1}"
+            cte_name = f"cte{query_idx + 1}"
             
             query = query.rstrip(';')
             cte = f"{cte_name} AS (\n  {query}\n)"
@@ -291,7 +292,7 @@ class GitHubIntegration:
         new_branch = f"unified-query-issue-{issue_number}"
         
         try:
-            ref = repo.get_git_ref(f"heads/{new_branch}")
+            repo.get_git_ref(f"heads/{new_branch}")
             logger.info(f"Branch {new_branch} já existe")
         except:
             try:
@@ -299,7 +300,7 @@ class GitHubIntegration:
                 repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=sha)
                 logger.info(f"Criado novo branch: {new_branch}")
             except Exception as e:
-                logger.error(f"Falha ao criar branch: {str(e)}")
+                logger.error(f"Falha ao criar branch: {e}")
                 return
         
         file_path = f"queries/unified-query-issue-{issue_number}.sql"
@@ -324,7 +325,7 @@ class GitHubIntegration:
                 )
                 logger.info(f"Arquivo {file_path} criado")
             except Exception as e:
-                logger.error(f"Erro ao criar arquivo: {str(e)}")
+                logger.error(f"Erro ao criar arquivo: {e}")
                 return
         
         try:
@@ -341,7 +342,7 @@ class GitHubIntegration:
             )
             logger.info(f"Criado PR #{pr.number}")
         except Exception as e:
-            logger.error(f"Erro ao criar PR: {str(e)}")
+            logger.error(f"Erro ao criar PR: {e}")
 
 def main():
     """Função principal para processar issues do GitHub."""
@@ -396,8 +397,8 @@ def main():
         github_integration.save_unified_query(repo_name, issue_number, unified_query)
         
     except Exception as e:
-        logger.error(f"Erro durante o processamento: {str(e)}")
-        log_capture.append(f"❌ Erro durante o processamento: {str(e)}")
+        logger.error(f"Erro durante o processamento: {e}")
+        log_capture.append(f"❌ Erro durante o processamento: {e}")
         github_integration.post_query_to_issue(repo_name, issue_number, "", log_capture)
 
 if __name__ == "__main__":
