@@ -38,33 +38,26 @@ class QueryExtractor:
         
         logger.info(f"Processando issue #{issue_number}: {issue.title}")
         
-        # Extrair queries do corpo da issue
         queries = []
-        query_pattern = r"Query\s+\d+:\s+(SELECT.+?)((?=Query\s+\d+:)|$)"
-        
-        # Usando regex para encontrar todas as queries no formato "Query X: SELECT..."
+        # Padrão ajustado para capturar queries numeradas
+        query_pattern = r"Query\s+\d+:\s*(SELECT.+?)(?=(?:Query\s+\d+:)|$)"
+
         matches = re.finditer(query_pattern, issue.body, re.DOTALL | re.IGNORECASE)
-        
         for match in matches:
             query = match.group(1).strip()
             queries.append(query)
             logger.info(f"Extraída Query #{len(queries)}")
         
-        # Considerar também o formato SQL code block
-        pattern = r"```sql\s*(.+?)\s*```"
-        logger.info(f"Usando padrão: {pattern}")
+        # Padrão ajustado para code blocks SQL
+        pattern = r"```sql\s*([\s\S]+?)\s*```"
         sql_blocks = re.findall(pattern, issue.body, re.DOTALL)
         
         for block in sql_blocks:
-            # Verificar se o bloco contém múltiplas queries
             if re.search(r"Query\s+\d+:", block, re.IGNORECASE):
-                # Já extraímos usando o padrão anterior
                 continue
-            else:
-                # Considerar o bloco inteiro como uma única query
-                if block.strip().upper().startswith("SELECT"):
-                    queries.append(block.strip())
-                    logger.info(f"Extraída Query #{len(queries)} de bloco SQL")
+            if block.strip().upper().startswith("SELECT"):
+                queries.append(block.strip())
+                logger.info(f"Extraída Query #{len(queries)} de bloco SQL")
         
         if not queries:
             logger.warning("Nenhuma query encontrada na issue")
@@ -89,10 +82,7 @@ class SQLProcessor:
             Lista de tuplas (coluna, alias)
         """
         try:
-            # Formatar a query para evitar problemas de parsing
             query = sqlparse.format(query, keyword_case='upper', reindent=True)
-            
-            # Extrair a parte SELECT da query
             select_match = re.search(r"SELECT\s+(.+?)\s+FROM", query, re.DOTALL | re.IGNORECASE)
             if not select_match:
                 logger.error(f"Não foi possível encontrar cláusula SELECT na query: {query[:100]}...")
@@ -100,62 +90,52 @@ class SQLProcessor:
             
             select_clause = select_match.group(1)
             
-            # Dividir as colunas
-            columns = []
-            
-            # Caso especial: SELECT * 
-            if '*' in select_clause:
+            if '*' in select_clause.strip():
                 logger.warning("A query contém SELECT *. Isso pode causar problemas na unificação.")
                 return [('*', '*')]
             
-            # Processar colunas
+            columns = []
             current_col = ""
             parenthesis_count = 0
+            in_quotes = False
             
+            # Melhor tratamento de strings e parênteses
             for char in select_clause:
-                if char == '(' and not current_col.endswith("'"):
+                if char == "'" and not in_quotes:
+                    in_quotes = True
+                    current_col += char
+                elif char == "'" and in_quotes:
+                    in_quotes = False
+                    current_col += char
+                elif char == '(' and not in_quotes:
                     parenthesis_count += 1
                     current_col += char
-                elif char == ')' and not current_col.endswith("'"):
+                elif char == ')' and not in_quotes:
                     parenthesis_count -= 1
                     current_col += char
-                elif char == ',' and parenthesis_count == 0:
-                    # Final de uma coluna
+                elif char == ',' and parenthesis_count == 0 and not in_quotes:
                     columns.append(current_col.strip())
                     current_col = ""
                 else:
                     current_col += char
             
-            # Adicionar a última coluna
             if current_col.strip():
                 columns.append(current_col.strip())
             
-            # Processar cada coluna para extrair nome e alias
             result = []
             for col in columns:
-                # Verificar se há um alias explícito
-                alias_match = re.search(r"AS\s+([^\s,]+)$", col, re.IGNORECASE)
-                
+                alias_match = re.search(r"\s+AS\s+([^\s,]+)$", col, re.IGNORECASE)
                 if alias_match:
                     alias = alias_match.group(1).strip('"`')
-                    # Extrair a parte da coluna sem o alias
                     column = col[:alias_match.start()].strip()
                 else:
-                    # Se não há alias explícito, verificar se há alias implícito
-                    parts = col.split()
+                    parts = [p for p in col.split() if p]
                     if len(parts) > 1 and not re.search(r"[\(\)]", parts[-1]):
                         column = ' '.join(parts[:-1]).strip()
                         alias = parts[-1].strip('"`')
                     else:
-                        # Sem alias, usar o nome da coluna
                         column = col.strip()
-                        # Verificar se é uma expressão ou nome simples
-                        if '.' in column and '(' not in column:
-                            # É um nome qualificado, pegar apenas a última parte
-                            alias = column.split('.')[-1].strip('"`')
-                        else:
-                            # É um nome simples ou expressão
-                            alias = column.strip('"`')
+                        alias = column.split('.')[-1].strip('"`') if '.' in column and '(' not in column else column.strip('"`')
                 
                 result.append((column, alias))
             
@@ -175,15 +155,12 @@ class SQLProcessor:
         Returns:
             Query SQL corrigida
         """
-        # Corrigir ponto e vírgula no final
         query = query.strip()
         if not query.endswith(';'):
             query += ';'
         
-        # Corrigir espaços extras entre palavras-chave
         query = re.sub(r'\s+', ' ', query)
         
-        # Corrigir palavras-chave comuns mal escritas
         common_mistakes = {
             r'\bSELETC\b': 'SELECT',
             r'\bFROM\s+FROM\b': 'FROM',
@@ -212,17 +189,14 @@ class SQLProcessor:
         if not queries:
             return ""
         
-        # Corrigir possíveis erros sintáticos
         fixed_queries = [self.fix_simple_syntax_errors(query) for query in queries]
         
-        # Extrair colunas de cada query
         all_column_sets = []
         for i, query in enumerate(fixed_queries):
             columns = self.parse_columns(query)
             all_column_sets.append((i, columns))
             logger.info(f"Query {i+1}: {len(columns)} colunas encontradas")
         
-        # Construir um conjunto unificado de todas as colunas (por alias)
         all_aliases = set()
         for _, columns in all_column_sets:
             for _, alias in columns:
@@ -230,7 +204,6 @@ class SQLProcessor:
         
         logger.info(f"Total de colunas unificadas: {len(all_aliases)}")
         
-        # Construir CTEs
         ctes = []
         union_queries = []
         
@@ -238,14 +211,10 @@ class SQLProcessor:
             query = fixed_queries[query_idx]
             cte_name = f"cte{query_idx+1}"
             
-            # Remover ponto e vírgula do final para incorporar na CTE
             query = query.rstrip(';')
-            
-            # Criar a CTE
             cte = f"{cte_name} AS (\n  {query}\n)"
             ctes.append(cte)
             
-            # Construir a parte do UNION para esta query
             column_aliases = {alias: col for col, alias in columns}
             union_columns = []
             
@@ -258,7 +227,6 @@ class SQLProcessor:
             union_query = f"SELECT {', '.join(union_columns)} FROM {cte_name}"
             union_queries.append(union_query)
         
-        # Construir a query final
         with_clause = "WITH " + ",\n".join(ctes)
         union_clause = "\nUNION ALL\n".join(union_queries)
         
@@ -294,14 +262,12 @@ class GitHubIntegration:
         
         comment = "## 🤖 Query Unificada\n\n"
         
-        # Adicionar mensagens de log
         if log_messages:
             comment += "### Logs de Processamento\n"
             for msg in log_messages:
                 comment += f"- {msg}\n"
             comment += "\n"
         
-        # Adicionar a query unificada
         comment += "### Query SQL Unificada\n"
         comment += "```sql\n"
         comment += unified_query
@@ -321,29 +287,26 @@ class GitHubIntegration:
             unified_query: Query SQL unificada
         """
         repo = self.github.get_repo(repo_name)
-        
-        # Criar um novo branch baseado no branch principal
         base_branch = repo.default_branch
         new_branch = f"unified-query-issue-{issue_number}"
         
-        # Verificar se o branch já existe
+        # Criar ou usar branch existente
         try:
             ref = repo.get_git_ref(f"heads/{new_branch}")
-            # Se não lançar exceção, o branch existe
-            logger.info(f"Branch {new_branch} já existe, usando-o")
+            logger.info(f"Branch {new_branch} já existe")
         except:
-            # Criar novo branch
-            sha = repo.get_branch(base_branch).commit.sha
-            repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=sha)
-            logger.info(f"Criado novo branch: {new_branch}")
+            try:
+                sha = repo.get_branch(base_branch).commit.sha
+                repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=sha)
+                logger.info(f"Criado novo branch: {new_branch}")
+            except Exception as e:
+                logger.error(f"Falha ao criar branch: {str(e)}")
+                return
         
-        # Nome do arquivo
         file_path = f"queries/unified-query-issue-{issue_number}.sql"
         
-        # Verificar se o arquivo já existe
         try:
             contents = repo.get_contents(file_path, ref=new_branch)
-            # Atualizar arquivo existente
             repo.update_file(
                 path=file_path,
                 message=f"Atualizar query unificada da issue #{issue_number}",
@@ -351,9 +314,8 @@ class GitHubIntegration:
                 sha=contents.sha,
                 branch=new_branch
             )
-            logger.info(f"Arquivo {file_path} atualizado no branch {new_branch}")
+            logger.info(f"Arquivo {file_path} atualizado")
         except:
-            # Criar novo arquivo
             try:
                 repo.create_file(
                     path=file_path,
@@ -361,40 +323,34 @@ class GitHubIntegration:
                     content=unified_query,
                     branch=new_branch
                 )
-                logger.info(f"Arquivo {file_path} criado no branch {new_branch}")
+                logger.info(f"Arquivo {file_path} criado")
             except Exception as e:
-                # Pode ser necessário criar o diretório
                 logger.error(f"Erro ao criar arquivo: {str(e)}")
                 return
         
-        # Criar pull request se ainda não existir
+        # Criar PR se necessário
         try:
-            # Verificar se já existe um PR para este branch
-            for pr in repo.get_pulls(state="open"):
-                if pr.head.ref == new_branch:
-                    logger.info(f"PR já existe: #{pr.number}")
-                    return
+            pulls = repo.get_pulls(state="open", head=f"{repo.owner.login}:{new_branch}")
+            if pulls.totalCount > 0:
+                logger.info(f"PR já existe para branch {new_branch}")
+                return
             
-            # Criar novo PR
             pr = repo.create_pull(
                 title=f"Query Unificada da Issue #{issue_number}",
-                body=f"Este PR contém a query unificada solicitada na issue #{issue_number}.\n\n"
-                     f"A query foi processada automaticamente pelo Query Unifier.",
+                body=f"Este PR contém a query unificada da issue #{issue_number}.",
                 head=new_branch,
                 base=base_branch
             )
-            logger.info(f"Criado PR #{pr.number} para o branch {new_branch}")
+            logger.info(f"Criado PR #{pr.number}")
         except Exception as e:
             logger.error(f"Erro ao criar PR: {str(e)}")
 
 def main():
     """Função principal para processar issues do GitHub."""
-    # Obter variáveis de ambiente
     github_token = os.environ.get("GITHUB_TOKEN")
     repo_name = os.environ.get("GITHUB_REPOSITORY")
     issue_number = os.environ.get("ISSUE_NUMBER")
     
-    # Verificar se as variáveis foram fornecidas
     if not all([github_token, repo_name, issue_number]):
         logger.error("Variáveis de ambiente necessárias não foram fornecidas.")
         return
@@ -405,16 +361,13 @@ def main():
         logger.error(f"Número da issue inválido: {issue_number}")
         return
     
-    # Inicializar as classes
     extractor = QueryExtractor(github_token)
     processor = SQLProcessor()
     github_integration = GitHubIntegration(github_token)
     
-    # Capturar logs para reportar na issue
     log_capture = []
     
     try:
-        # Extrair queries da issue
         log_capture.append(f"Processando issue #{issue_number} do repositório {repo_name}")
         queries = extractor.extract_queries_from_issue(repo_name, issue_number)
         
@@ -425,14 +378,12 @@ def main():
         
         log_capture.append(f"✅ Encontradas {len(queries)} queries para processamento")
         
-        # Processar e unificar as queries
         for i, query in enumerate(queries):
             fixed_query = processor.fix_simple_syntax_errors(query)
             columns = processor.parse_columns(fixed_query)
             column_names = [alias for _, alias in columns]
             log_capture.append(f"Query {i+1}: {len(columns)} colunas identificadas - {', '.join(column_names)}")
         
-        # Unificar as queries
         log_capture.append("🔄 Unificando queries...")
         unified_query = processor.unify_queries(queries)
         
@@ -443,10 +394,7 @@ def main():
         
         log_capture.append("✅ Queries unificadas com sucesso")
         
-        # Postar a query unificada na issue
         github_integration.post_query_to_issue(repo_name, issue_number, unified_query, log_capture)
-        
-        # Salvar a query unificada no repositório
         github_integration.save_unified_query(repo_name, issue_number, unified_query)
         
     except Exception as e:
