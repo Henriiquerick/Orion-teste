@@ -145,8 +145,8 @@ class SQLProcessor:
             return ""
         
         fixed_queries = [self.fix_simple_syntax_errors(query) for query in queries]
-        
         all_column_sets = []
+        
         for i, query in enumerate(fixed_queries):
             columns = self.parse_columns(query)
             all_column_sets.append((i, columns))
@@ -165,8 +165,9 @@ class SQLProcessor:
         for i, (query_idx, columns) in enumerate(all_column_sets):
             query = fixed_queries[query_idx]
             cte_name = f"cte{query_idx + 1}"
-            
             query = query.rstrip(';')
+            
+            # Construir o CTE
             cte = f"{cte_name} AS (\n  {query}\n)"
             ctes.append(cte)
             
@@ -179,13 +180,20 @@ class SQLProcessor:
                 else:
                     union_columns.append(f"NULL AS {alias}")
             
+            # Construir a query UNION ALL
             union_query = f"SELECT {', '.join(union_columns)} FROM {cte_name}"
             union_queries.append(union_query)
         
+        # Montar a query final
         with_clause = "WITH " + ",\n".join(ctes)
         union_clause = "\nUNION ALL\n".join(union_queries)
         
-        final_query = f"{with_clause}\n\n-- Query final unificada\nSELECT * FROM (\n{union_clause}\n) AS unified_result;"
+        # Evitar o uso de \ dentro de f-strings
+        final_query = (
+            f"{with_clause}\n"
+            "-- Query final unificada\n"
+            f"SELECT * FROM (\n{union_clause}\n) AS unified_result;"
+        )
         
         return final_query
 
