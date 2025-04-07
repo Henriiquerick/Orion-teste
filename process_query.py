@@ -1,10 +1,9 @@
 import os
 import re
 import logging
-from typing import List, Dict, Set, Tuple
+from typing import List, Tuple
 import sqlparse
 from github import Github
-import json
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -39,7 +38,6 @@ class QueryExtractor:
         logger.info(f"Processando issue #{issue_number}: {issue.title}")
         
         queries = []
-        # Padrão ajustado para capturar queries numeradas
         query_pattern = r"Query\s+\d+:\s*(SELECT.+?)(?=(?:Query\s+\d+:)|$)"
 
         matches = re.finditer(query_pattern, issue.body, re.DOTALL | re.IGNORECASE)
@@ -48,7 +46,6 @@ class QueryExtractor:
             queries.append(query)
             logger.info(f"Extraída Query #{len(queries)}")
         
-        # Padrão ajustado para code blocks SQL
         pattern = r"```sql\s*([\s\S]+?)\s*```"
         sql_blocks = re.findall(pattern, issue.body, re.DOTALL)
         
@@ -99,7 +96,6 @@ class SQLProcessor:
             parenthesis_count = 0
             in_quotes = False
             
-            # Melhor tratamento de strings e parênteses
             for char in select_clause:
                 if char == "'" and not in_quotes:
                     in_quotes = True
@@ -135,7 +131,11 @@ class SQLProcessor:
                         alias = parts[-1].strip('"`')
                     else:
                         column = col.strip()
-                        alias = column.split('.')[-1].strip('"`') if '.' in column and '(' not in column else column.strip('"`')
+                        # Evitar f-string com \ diretamente, usar strip separadamente
+                        if '.' in column and '(' not in column:
+                            alias = column.split('.')[-1].strip('"`')
+                        else:
+                            alias = column.strip('"`')
                 
                 result.append((column, alias))
             
@@ -290,7 +290,6 @@ class GitHubIntegration:
         base_branch = repo.default_branch
         new_branch = f"unified-query-issue-{issue_number}"
         
-        # Criar ou usar branch existente
         try:
             ref = repo.get_git_ref(f"heads/{new_branch}")
             logger.info(f"Branch {new_branch} já existe")
@@ -328,7 +327,6 @@ class GitHubIntegration:
                 logger.error(f"Erro ao criar arquivo: {str(e)}")
                 return
         
-        # Criar PR se necessário
         try:
             pulls = repo.get_pulls(state="open", head=f"{repo.owner.login}:{new_branch}")
             if pulls.totalCount > 0:
