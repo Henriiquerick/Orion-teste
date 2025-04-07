@@ -1,39 +1,46 @@
----
-name: União de Queries SQL
-about: Template para solicitação de automação de união de queries no projeto
-title: "[União de Queries] Nome da Tabela Final Aqui"
-labels: ["automacao", "sql", "uniao"]
-assignees: ''
+# Solicitação de Unificação de Queries SQL
 
----
+## ℹ️ Informações Básicas
 
-## 🧮 Número de Queries
-<!-- Informe quantas queries serão unificadas (por exemplo: 2, 3 ou 4) -->
-**Número de Queries:** 
+**Nome da tabela final:** <!-- Ex: relatorio_vendas_consolidado -->
 
-## 📦 Nome Final da Tabela
-<!-- Nome desejado para a tabela unificada -->
-**Nome da Tabela Final:** 
+**Quantidade de queries:** <!-- Ex: 3 -->
 
-## ✍️ Autor da Solicitação
-<!-- Nome do responsável pela criação desta issue -->
-**Autor:** 
+**Objetivo da unificação:** <!-- Descreva brevemente o propósito desta unificação -->
 
-## 🎯 Objetivo da Tabela Final
-<!-- Explique o objetivo/responsabilidade da tabela final unificada -->
-**Objetivo da Tabela Final:** 
+**Responsável:** <!-- Seu nome/usuário -->
 
-## 📎 Queries (copie e cole cada uma abaixo)
+## 📋 Queries para Unificação
 
-### Query 1
-\`\`\`sql
--- Cole aqui a Query 1
-\`\`\`
+### Query 1:
+```sql
+<!-- Cole sua primeira query aqui -->
+SELECT campo1, campo2, campo3
+FROM tabela1
+WHERE condicao = 'valor'
+```
 
-### Query 2
-\`\`\`sql
--- Cole aqui a Query 2
-\`\`\`
+### Query 2:
+```sql
+<!-- Cole sua segunda query aqui -->
+SELECT campoA, campoB, campoC
+FROM tabela2
+WHERE outra_condicao = 'outro_valor'
+```
 
-<!-- (Adicione Query 3 e Query 4 se necessário) -->
+<!-- Adicione mais blocos de query conforme necessário -->
+### Query 3:
+```sql
+<!-- Cole sua terceira query aqui se aplicável -->
+```
 
+## 🔍 Detalhes Adicionais
+
+**Prioridade:** <!-- Alta, Média ou Baixa -->
+
+**Data limite:** <!-- Se aplicável -->
+
+**Observações:** <!-- Informações adicionais que possam ser relevantes para o processamento -->
+
+<!-- Por favor, não altere a linha abaixo -->
+/label sql-query
