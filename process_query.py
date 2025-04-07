@@ -13,25 +13,9 @@ class QueryExtractor:
     """Classe responsável por extrair queries SQL de issues do GitHub."""
     
     def __init__(self, token: str):
-        """
-        Inicializa o extrator de queries.
-        
-        Args:
-            token: Token de autenticação do GitHub
-        """
         self.github = Github(token)
     
     def extract_queries_from_issue(self, repo_name: str, issue_number: int) -> List[str]:
-        """
-        Extrai queries SQL de uma issue do GitHub.
-        
-        Args:
-            repo_name: Nome do repositório no formato 'dono/repositorio'
-            issue_number: Número da issue
-            
-        Returns:
-            Lista de queries SQL extraídas
-        """
         repo = self.github.get_repo(repo_name)
         issue = repo.get_issue(number=issue_number)
         
@@ -65,19 +49,9 @@ class SQLProcessor:
     """Classe responsável por processar e unificar queries SQL."""
     
     def __init__(self):
-        """Inicializa o processador SQL."""
         pass
     
     def parse_columns(self, query: str) -> List[Tuple[str, str]]:
-        """
-        Analisa a query SQL e extrai as colunas e seus aliases.
-        
-        Args:
-            query: Query SQL para análise
-            
-        Returns:
-            Lista de tuplas (coluna, alias)
-        """
         try:
             query = sqlparse.format(query, keyword_case='upper', reindent=True)
             select_match = re.search(r"SELECT\s+(.+?)\s+FROM", query, re.DOTALL | re.IGNORECASE)
@@ -125,16 +99,14 @@ class SQLProcessor:
                     alias = alias_match.group(1).strip('"`')
                     column = col[:alias_match.start()].strip()
                 else:
-                    parts = [p for p in col.split() if p]
+                    parts = [part for part in col.split() if part]
                     if len(parts) > 1 and not re.search(r"[\(\)]", parts[-1]):
                         column = " ".join(parts[:-1]).strip()
                         alias = parts[-1].strip('"`')
                     else:
                         column = col.strip()
-                        # Separar a lógica de strip para evitar problemas com f-strings
                         if '.' in column and '(' not in column:
-                            alias = column.split('.')[-1]
-                            alias = alias.strip('"`')
+                            alias = column.split('.')[-1].strip('"`')
                         else:
                             alias = column.strip('"`')
                 
@@ -147,15 +119,6 @@ class SQLProcessor:
             return []
     
     def fix_simple_syntax_errors(self, query: str) -> str:
-        """
-        Tenta corrigir erros simples de sintaxe na query.
-        
-        Args:
-            query: Query SQL com possíveis erros
-            
-        Returns:
-            Query SQL corrigida
-        """
         query = query.strip()
         if not query.endswith(';'):
             query += ';'
@@ -178,15 +141,6 @@ class SQLProcessor:
         return query
     
     def unify_queries(self, queries: List[str]) -> str:
-        """
-        Unifica múltiplas queries SQL usando CTEs e UNION ALL.
-        
-        Args:
-            queries: Lista de queries SQL a serem unificadas
-            
-        Returns:
-            Query SQL unificada com CTEs e UNION ALL
-        """
         if not queries:
             return ""
         
@@ -239,25 +193,10 @@ class GitHubIntegration:
     """Classe responsável pela integração com GitHub."""
     
     def __init__(self, token: str):
-        """
-        Inicializa a integração com GitHub.
-        
-        Args:
-            token: Token de autenticação do GitHub
-        """
         self.github = Github(token)
     
     def post_query_to_issue(self, repo_name: str, issue_number: int, unified_query: str, 
                            log_messages: List[str]) -> None:
-        """
-        Posta a query unificada como comentário na issue.
-        
-        Args:
-            repo_name: Nome do repositório
-            issue_number: Número da issue
-            unified_query: Query SQL unificada
-            log_messages: Mensagens de log para incluir no comentário
-        """
         repo = self.github.get_repo(repo_name)
         issue = repo.get_issue(number=issue_number)
         
@@ -279,14 +218,6 @@ class GitHubIntegration:
     
     def save_unified_query(self, repo_name: str, issue_number: int, 
                           unified_query: str) -> None:
-        """
-        Salva a query unificada como um arquivo no repositório.
-        
-        Args:
-            repo_name: Nome do repositório
-            issue_number: Número da issue
-            unified_query: Query SQL unificada
-        """
         repo = self.github.get_repo(repo_name)
         base_branch = repo.default_branch
         new_branch = f"unified-query-issue-{issue_number}"
@@ -345,7 +276,6 @@ class GitHubIntegration:
             logger.error(f"Erro ao criar PR: {e}")
 
 def main():
-    """Função principal para processar issues do GitHub."""
     github_token = os.environ.get("GITHUB_TOKEN")
     repo_name = os.environ.get("GITHUB_REPOSITORY")
     issue_number = os.environ.get("ISSUE_NUMBER")
