@@ -6,8 +6,7 @@ on:
 
 jobs:
   process-queries:
-    # Executar apenas se a issue tiver o label "sql-query"
-    if: contains(github.event.issue.labels.*.name, 'sql-query')
+    if: contains(github.event.issue.labels.*.name, 'sql-query') || contains(github.event.issue.body, '/label sql-query')
     runs-on: ubuntu-latest
     
     steps:
