@@ -92,8 +92,9 @@ class SQLProcessor:
             return "string"
             
         # Funções de conversão
-        if re.search(r"cast\s*\(.+\s+as\s+(\w+)", expr_lower):
-            type_match = re.search(r"cast\s*\(.+\s+as\s+(\w+)", expr_lower)
+        cast_pattern = r"cast\s*\(.+\s+as\s+(\w+)"
+        if re.search(cast_pattern, expr_lower):
+            type_match = re.search(cast_pattern, expr_lower)
             if type_match:
                 cast_type = type_match.group(1)
                 for category, types in self.SQL_TYPE_MAPPING.items():
@@ -128,7 +129,8 @@ class SQLProcessor:
         """
         try:
             query = sqlparse.format(query, keyword_case='upper', reindent=True)
-            select_match = re.search(r"SELECT\s+(.+?)\s+FROM", query, re.DOTALL | re.IGNORECASE)
+            select_pattern = r"SELECT\s+(.+?)\s+FROM"
+            select_match = re.search(select_pattern, query, re.DOTALL | re.IGNORECASE)
             if not select_match:
                 logger.error(f"Não foi possível encontrar cláusula SELECT na query: {query[:100]}...")
                 return []
@@ -167,8 +169,10 @@ class SQLProcessor:
                 columns.append(current_col.strip())
             
             result = []
+            alias_pattern = r"\s+AS\s+([^\s,]+)$"
+            
             for col in columns:
-                alias_match = re.search(r"\s+AS\s+([^\s,]+)$", col, re.IGNORECASE)
+                alias_match = re.search(alias_pattern, col, re.IGNORECASE)
                 if alias_match:
                     alias = alias_match.group(1).strip('"`')
                     column = col[:alias_match.start()].strip()
@@ -211,37 +215,41 @@ class SQLProcessor:
         # Formatar a query para facilitar análise
         formatted_query = sqlparse.format(query, keyword_case='upper')
         
+        # Padrões regex para cada componente
+        select_pattern = r"SELECT\s+(.+?)(?:\s+FROM\s+|$)"
+        from_pattern = r"FROM\s+(.+?)(?:\s+WHERE\s+|\s+GROUP\s+BY\s+|\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)"
+        where_pattern = r"WHERE\s+(.+?)(?:\s+GROUP\s+BY\s+|\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)"
+        group_by_pattern = r"GROUP\s+BY\s+(.+?)(?:\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)"
+        having_pattern = r"HAVING\s+(.+?)(?:\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)"
+        order_by_pattern = r"ORDER\s+BY\s+(.+?)(?:\s+LIMIT\s+|$)"
+        limit_pattern = r"LIMIT\s+(.+?)$"
+        
         # Extrair cada componente usando expressões regulares
-        select_match = re.search(r"SELECT\s+(.+?)(?:\s+FROM\s+|$)", formatted_query, re.DOTALL)
+        select_match = re.search(select_pattern, formatted_query, re.DOTALL)
         if select_match:
             components['SELECT'] = select_match.group(1).strip()
         
-        from_match = re.search(r"FROM\s+(.+?)(?:\s+WHERE\s+|\s+GROUP\s+BY\s+|\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
-                              formatted_query, re.DOTALL)
+        from_match = re.search(from_pattern, formatted_query, re.DOTALL)
         if from_match:
             components['FROM'] = from_match.group(1).strip()
         
-        where_match = re.search(r"WHERE\s+(.+?)(?:\s+GROUP\s+BY\s+|\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
-                               formatted_query, re.DOTALL)
+        where_match = re.search(where_pattern, formatted_query, re.DOTALL)
         if where_match:
             components['WHERE'] = where_match.group(1).strip()
         
-        group_by_match = re.search(r"GROUP\s+BY\s+(.+?)(?:\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
-                                  formatted_query, re.DOTALL)
+        group_by_match = re.search(group_by_pattern, formatted_query, re.DOTALL)
         if group_by_match:
             components['GROUP BY'] = group_by_match.group(1).strip()
         
-        having_match = re.search(r"HAVING\s+(.+?)(?:\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
-                                formatted_query, re.DOTALL)
+        having_match = re.search(having_pattern, formatted_query, re.DOTALL)
         if having_match:
             components['HAVING'] = having_match.group(1).strip()
         
-        order_by_match = re.search(r"ORDER\s+BY\s+(.+?)(?:\s+LIMIT\s+|$)", 
-                                  formatted_query, re.DOTALL)
+        order_by_match = re.search(order_by_pattern, formatted_query, re.DOTALL)
         if order_by_match:
             components['ORDER BY'] = order_by_match.group(1).strip()
         
-        limit_match = re.search(r"LIMIT\s+(.+?)$", formatted_query)
+        limit_match = re.search(limit_pattern, formatted_query)
         if limit_match:
             components['LIMIT'] = limit_match.group(1).strip()
         
@@ -370,45 +378,45 @@ class SQLProcessor:
         with_clause = "WITH " + ",\n".join(ctes)
         union_clause = "\nUNION ALL\n".join(union_queries)
         
-        # Evitar o uso de \ dentro de f-strings
-        final_query = (
-            f"{with_clause}\n"
-            "-- Query final unificada\n"
-            f"SELECT * FROM (\n{union_clause}\n) AS unified_result;"
-        )
+        # Montando a query final sem f-strings problemáticos
+        final_query = with_clause + "\n"
+        final_query += "-- Query final unificada\n"
+        final_query += "SELECT * FROM (\n" + union_clause + "\n) AS unified_result;"
         
         return final_query
 
 class GitHubIntegration:
     """Classe responsável pela integração com GitHub."""
-    
+
     def __init__(self, token: str):
         self.github = Github(token)
-    
+
     def post_query_to_issue(self, repo_name: str, issue_number: int, unified_query: str, 
                            log_messages: List[str], type_warnings: List[str] = None) -> None:
         repo = self.github.get_repo(repo_name)
         issue = repo.get_issue(number=issue_number)
-        
+
         comment = "## 🤖 Query Unificada\n\n"
-        
+
         if type_warnings:
             comment += "### ⚠️ Alertas de Compatibilidade\n"
             for warning in type_warnings:
-                comment += f"{warning}\n"
+                linha_warning = warning + "\n"
+                comment += linha_warning
             comment += "\n"
-        
+
         if log_messages:
             comment += "### Logs de Processamento\n"
             for msg in log_messages:
-                comment += f"- {msg}\n"
+                linha_msg = msg + "\n"
+                comment += linha_msg
             comment += "\n"
-        
+
         comment += "### Query SQL Unificada\n"
         comment += "```sql\n"
         comment += unified_query
         comment += "\n```\n"
-        
+
         issue.create_comment(comment)
         logger.info(f"Comentário postado na issue #{issue_number}")
     
