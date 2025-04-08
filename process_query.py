@@ -1,7 +1,7 @@
 import os
 import re
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Set
 import sqlparse
 from github import Github
 
@@ -48,10 +48,84 @@ class QueryExtractor:
 class SQLProcessor:
     """Classe responsável por processar e unificar queries SQL."""
     
-    def __init__(self):
-        pass
+    # Definindo mapeamento básico de tipos SQL para ajudar na detecção de incompatibilidades
+    SQL_TYPE_MAPPING = {
+        'integer': {'int', 'integer', 'smallint', 'bigint', 'tinyint'},
+        'decimal': {'decimal', 'numeric', 'float', 'double', 'real'},
+        'string': {'varchar', 'char', 'text', 'string', 'nvarchar', 'nchar'},
+        'date': {'date', 'datetime', 'timestamp', 'time'},
+        'boolean': {'boolean', 'bool'},
+        'binary': {'binary', 'varbinary', 'blob'},
+    }
     
-    def parse_columns(self, query: str) -> List[Tuple[str, str]]:
+    def __init__(self):
+        self.type_warnings = []
+    
+    def infer_column_type(self, column_expr: str) -> str:
+        """Infere o tipo de uma expressão de coluna com base em padrões comuns."""
+        expr_lower = column_expr.lower()
+        
+        # Verifica se é um valor constante
+        if re.search(r"^\s*\d+\s*$", column_expr):
+            return "integer"
+        elif re.search(r"^\s*\d+\.\d+\s*$", column_expr):
+            return "decimal"
+        elif re.search(r"^\s*'.*'\s*$", column_expr):
+            return "string"
+        
+        # Verifica funções de agregação comuns
+        if re.search(r"count\s*\(", expr_lower):
+            return "integer"
+        elif re.search(r"sum\s*\(", expr_lower):
+            return "decimal" 
+        elif re.search(r"avg\s*\(", expr_lower):
+            return "decimal"
+        elif re.search(r"min\s*\(|max\s*\(", expr_lower):
+            return "unknown"  # depende do tipo da coluna interna
+        
+        # Funções de data
+        if any(func in expr_lower for func in ['date', 'current_date', 'getdate', 'now']):
+            return "date"
+            
+        # Funções de string
+        if any(func in expr_lower for func in ['concat', 'substring', 'trim', 'lower', 'upper']):
+            return "string"
+            
+        # Funções de conversão
+        if re.search(r"cast\s*\(.+\s+as\s+(\w+)", expr_lower):
+            type_match = re.search(r"cast\s*\(.+\s+as\s+(\w+)", expr_lower)
+            if type_match:
+                cast_type = type_match.group(1)
+                for category, types in self.SQL_TYPE_MAPPING.items():
+                    if any(t in cast_type for t in types):
+                        return category
+        
+        # Caso não seja possível determinar o tipo
+        return "unknown"
+    
+    def are_types_compatible(self, type1: str, type2: str) -> bool:
+        """Verifica se dois tipos SQL são compatíveis para UNION."""
+        if type1 == type2:
+            return True
+            
+        if type1 == "unknown" or type2 == "unknown":
+            return True
+            
+        # Números são geralmente compatíveis entre si
+        if type1 in ['integer', 'decimal'] and type2 in ['integer', 'decimal']:
+            return True
+            
+        # Strings e datas geralmente têm conversão implícita
+        if type1 in ['string', 'date'] and type2 in ['string', 'date']:
+            return True
+            
+        return False
+    
+    def parse_columns(self, query: str) -> List[Tuple[str, str, str]]:
+        """
+        Analisa as colunas de uma query e tenta inferir seus tipos.
+        Retorna uma lista de tuplas (expressão, alias, tipo inferido).
+        """
         try:
             query = sqlparse.format(query, keyword_case='upper', reindent=True)
             select_match = re.search(r"SELECT\s+(.+?)\s+FROM", query, re.DOTALL | re.IGNORECASE)
@@ -63,7 +137,7 @@ class SQLProcessor:
             
             if '*' in select_clause.strip():
                 logger.warning("A query contém SELECT *. Isso pode causar problemas na unificação.")
-                return [('*', '*')]
+                return [('*', '*', 'unknown')]
             
             columns = []
             current_col = ""
@@ -110,13 +184,68 @@ class SQLProcessor:
                         else:
                             alias = column.strip('"`')
                 
-                result.append((column, alias))
+                inferred_type = self.infer_column_type(column)
+                result.append((column, alias, inferred_type))
             
             return result
             
         except Exception as e:
             logger.error(f"Erro ao analisar colunas da query: {e}")
             return []
+    
+    def extract_query_components(self, query: str) -> Dict[str, str]:
+        """
+        Extrai os componentes principais de uma query SQL (SELECT, FROM, WHERE, GROUP BY, etc.).
+        Retorna um dicionário com os componentes identificados.
+        """
+        components = {
+            'SELECT': '',
+            'FROM': '',
+            'WHERE': '',
+            'GROUP BY': '',
+            'HAVING': '',
+            'ORDER BY': '',
+            'LIMIT': ''
+        }
+        
+        # Formatar a query para facilitar análise
+        formatted_query = sqlparse.format(query, keyword_case='upper')
+        
+        # Extrair cada componente usando expressões regulares
+        select_match = re.search(r"SELECT\s+(.+?)(?:\s+FROM\s+|$)", formatted_query, re.DOTALL)
+        if select_match:
+            components['SELECT'] = select_match.group(1).strip()
+        
+        from_match = re.search(r"FROM\s+(.+?)(?:\s+WHERE\s+|\s+GROUP\s+BY\s+|\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
+                              formatted_query, re.DOTALL)
+        if from_match:
+            components['FROM'] = from_match.group(1).strip()
+        
+        where_match = re.search(r"WHERE\s+(.+?)(?:\s+GROUP\s+BY\s+|\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
+                               formatted_query, re.DOTALL)
+        if where_match:
+            components['WHERE'] = where_match.group(1).strip()
+        
+        group_by_match = re.search(r"GROUP\s+BY\s+(.+?)(?:\s+HAVING\s+|\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
+                                  formatted_query, re.DOTALL)
+        if group_by_match:
+            components['GROUP BY'] = group_by_match.group(1).strip()
+        
+        having_match = re.search(r"HAVING\s+(.+?)(?:\s+ORDER\s+BY\s+|\s+LIMIT\s+|$)", 
+                                formatted_query, re.DOTALL)
+        if having_match:
+            components['HAVING'] = having_match.group(1).strip()
+        
+        order_by_match = re.search(r"ORDER\s+BY\s+(.+?)(?:\s+LIMIT\s+|$)", 
+                                  formatted_query, re.DOTALL)
+        if order_by_match:
+            components['ORDER BY'] = order_by_match.group(1).strip()
+        
+        limit_match = re.search(r"LIMIT\s+(.+?)$", formatted_query)
+        if limit_match:
+            components['LIMIT'] = limit_match.group(1).strip()
+        
+        return components
     
     def fix_simple_syntax_errors(self, query: str) -> str:
         query = query.strip()
@@ -133,6 +262,8 @@ class SQLProcessor:
             r'ORDER\s+BYY\b': 'ORDER BY',
             r'JOIN\s+JOIN\b': 'JOIN',
             r'INNER\s+INNER\b': 'INNER',
+            r'HAVINGG\b': 'HAVING',
+            r'WHERRE\b': 'WHERE',
         }
         
         for mistake, correction in common_mistakes.items():
@@ -140,21 +271,71 @@ class SQLProcessor:
         
         return query
     
+    def check_type_compatibility(self, all_column_sets: List[Tuple[int, List[Tuple[str, str, str]]]]) -> List[str]:
+        """
+        Verifica a compatibilidade de tipos entre colunas de diferentes queries.
+        Retorna uma lista de alertas sobre possíveis incompatibilidades.
+        """
+        warnings = []
+        
+        # Agrupar colunas por alias
+        alias_to_types = {}
+        for query_idx, columns in all_column_sets:
+            for _, alias, inferred_type in columns:
+                if alias not in alias_to_types:
+                    alias_to_types[alias] = []
+                alias_to_types[alias].append((query_idx, inferred_type))
+        
+        # Verificar compatibilidade de tipos para cada alias
+        for alias, type_info in alias_to_types.items():
+            # Ignorar casos onde só há uma query usando o alias
+            if len(type_info) <= 1:
+                continue
+                
+            types = [t for _, t in type_info]
+            query_indices = [idx for idx, _ in type_info]
+            
+            # Verificar incompatibilidades
+            for i, type1 in enumerate(types):
+                for j, type2 in enumerate(types[i+1:], i+1):
+                    if not self.are_types_compatible(type1, type2):
+                        warnings.append(
+                            f"⚠️ Possível incompatibilidade de tipos para coluna '{alias}': "
+                            f"Query {query_indices[i]+1} usa tipo '{type1}', "
+                            f"Query {query_indices[j]+1} usa tipo '{type2}'"
+                        )
+        
+        return warnings
+    
     def unify_queries(self, queries: List[str]) -> str:
         if not queries:
             return ""
         
+        self.type_warnings = []  # Limpar avisos anteriores
         fixed_queries = [self.fix_simple_syntax_errors(query) for query in queries]
         all_column_sets = []
         
+        # Extrair componentes e analisar colunas de cada query
+        query_components = []
         for i, query in enumerate(fixed_queries):
+            components = self.extract_query_components(query)
+            query_components.append(components)
+            
             columns = self.parse_columns(query)
             all_column_sets.append((i, columns))
             logger.info(f"Query {i+1}: {len(columns)} colunas encontradas")
+            
+            # Verificar se a query usa GROUP BY ou HAVING
+            if components['GROUP BY'] or components['HAVING']:
+                logger.info(f"Query {i+1} contém cláusulas GROUP BY/HAVING")
+        
+        # Verificar compatibilidade de tipos
+        type_warnings = self.check_type_compatibility(all_column_sets)
+        self.type_warnings.extend(type_warnings)
         
         all_aliases = set()
         for _, columns in all_column_sets:
-            for _, alias in columns:
+            for _, alias, _ in columns:
                 all_aliases.add(alias)
         
         logger.info(f"Total de colunas unificadas: {len(all_aliases)}")
@@ -171,12 +352,13 @@ class SQLProcessor:
             cte = f"{cte_name} AS (\n  {query}\n)"
             ctes.append(cte)
             
-            column_aliases = {alias: col for col, alias in columns}
+            column_dict = {alias: (col, typ) for col, alias, typ in columns}
             union_columns = []
             
             for alias in sorted(all_aliases):
-                if alias in column_aliases:
-                    union_columns.append(column_aliases[alias])
+                if alias in column_dict:
+                    col, _ = column_dict[alias]
+                    union_columns.append(col)
                 else:
                     union_columns.append(f"NULL AS {alias}")
             
@@ -204,11 +386,17 @@ class GitHubIntegration:
         self.github = Github(token)
     
     def post_query_to_issue(self, repo_name: str, issue_number: int, unified_query: str, 
-                           log_messages: List[str]) -> None:
+                           log_messages: List[str], type_warnings: List[str] = None) -> None:
         repo = self.github.get_repo(repo_name)
         issue = repo.get_issue(number=issue_number)
         
         comment = "## 🤖 Query Unificada\n\n"
+        
+        if type_warnings:
+            comment += "### ⚠️ Alertas de Compatibilidade\n"
+            for warning in type_warnings:
+                comment += f"{warning}\n"
+            comment += "\n"
         
         if log_messages:
             comment += "### Logs de Processamento\n"
@@ -318,8 +506,19 @@ def main():
         for i, query in enumerate(queries):
             fixed_query = processor.fix_simple_syntax_errors(query)
             columns = processor.parse_columns(fixed_query)
-            column_names = [alias for _, alias in columns]
-            log_capture.append(f"Query {i+1}: {len(columns)} colunas identificadas - {', '.join(column_names)}")
+            
+            # Identificar cláusulas GROUP BY e HAVING
+            components = processor.extract_query_components(fixed_query)
+            if components['GROUP BY']:
+                log_capture.append(f"ℹ️ Query {i+1} contém GROUP BY: {components['GROUP BY']}")
+            if components['HAVING']:
+                log_capture.append(f"ℹ️ Query {i+1} contém HAVING: {components['HAVING']}")
+                
+            column_info = []
+            for col, alias, col_type in columns:
+                column_info.append(f"{alias} ({col_type})")
+            
+            log_capture.append(f"Query {i+1}: {len(columns)} colunas identificadas - {', '.join(column_info)}")
         
         log_capture.append("🔄 Unificando queries...")
         unified_query = processor.unify_queries(queries)
@@ -331,7 +530,7 @@ def main():
         
         log_capture.append("✅ Queries unificadas com sucesso")
         
-        github_integration.post_query_to_issue(repo_name, issue_number, unified_query, log_capture)
+        github_integration.post_query_to_issue(repo_name, issue_number, unified_query, log_capture, processor.type_warnings)
         github_integration.save_unified_query(repo_name, issue_number, unified_query)
         
     except Exception as e:
