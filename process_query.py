@@ -318,71 +318,50 @@ class SQLProcessor:
     def unify_queries(self, queries: List[str]) -> str:
         if not queries:
             return ""
-        
         self.type_warnings = []  # Limpar avisos anteriores
         fixed_queries = [self.fix_simple_syntax_errors(query) for query in queries]
         all_column_sets = []
-        
-        # Extrair componentes e analisar colunas de cada query
         query_components = []
         for i, query in enumerate(fixed_queries):
             components = self.extract_query_components(query)
             query_components.append(components)
-            
             columns = self.parse_columns(query)
             all_column_sets.append((i, columns))
             logger.info(f"Query {i+1}: {len(columns)} colunas encontradas")
-            
-            # Verificar se a query usa GROUP BY ou HAVING
             if components['GROUP BY'] or components['HAVING']:
                 logger.info(f"Query {i+1} contém cláusulas GROUP BY/HAVING")
-        
-        # Verificar compatibilidade de tipos
         type_warnings = self.check_type_compatibility(all_column_sets)
         self.type_warnings.extend(type_warnings)
-        
         all_aliases = set()
         for _, columns in all_column_sets:
             for _, alias, _ in columns:
                 all_aliases.add(alias)
-        
         logger.info(f"Total de colunas unificadas: {len(all_aliases)}")
-        
         ctes = []
         union_queries = []
-        
         for i, (query_idx, columns) in enumerate(all_column_sets):
             query = fixed_queries[query_idx]
             cte_name = f"cte{query_idx + 1}"
             query = query.rstrip(';')
-            
-            # Construir o CTE
             cte = f"{cte_name} AS (\n  {query}\n)"
             ctes.append(cte)
-            
             column_dict = {alias: (col, typ) for col, alias, typ in columns}
             union_columns = []
-            
             for alias in sorted(all_aliases):
                 if alias in column_dict:
                     col, _ = column_dict[alias]
                     union_columns.append(col)
                 else:
                     union_columns.append(f"NULL AS {alias}")
-            
-            # Construir a query UNION ALL
             union_query = f"SELECT {', '.join(union_columns)} FROM {cte_name}"
             union_queries.append(union_query)
-        
-        # Montar a query final
         with_clause = "WITH " + ",\n".join(ctes)
         union_clause = "\nUNION ALL\n".join(union_queries)
-        
-        # Montando a query final sem f-strings problemáticos
-        final_query = with_clause + "\n"
-        final_query += "-- Query final unificada\n"
-        final_query += "SELECT * FROM (\n" + union_clause + "\n) AS unified_result;"
-        
+        final_query = (
+            with_clause + "\n"
+            "-- Query final unificada\n"
+            "SELECT * FROM (\n" + union_clause + "\n) AS unified_result;"
+        )
         return final_query
 
 class GitHubIntegration:
@@ -392,31 +371,24 @@ class GitHubIntegration:
         self.github = Github(token)
 
     def post_query_to_issue(self, repo_name: str, issue_number: int, unified_query: str, 
-                           log_messages: List[str], type_warnings: List[str] = None) -> None:
+                            log_messages: List[str], type_warnings: List[str] = None) -> None:
         repo = self.github.get_repo(repo_name)
         issue = repo.get_issue(number=issue_number)
-
-        comment = "## 🤖 Query Unificada\n\n"
-
+        comment = "## 🤖 Query Unificada\n"
         if type_warnings:
             comment += "### ⚠️ Alertas de Compatibilidade\n"
             for warning in type_warnings:
-                linha_warning = warning + "\n"
-                comment += linha_warning
+                comment += warning + "\n"
             comment += "\n"
-
         if log_messages:
             comment += "### Logs de Processamento\n"
             for msg in log_messages:
-                linha_msg = msg + "\n"
-                comment += linha_msg
+                comment += msg + "\n"
             comment += "\n"
-
         comment += "### Query SQL Unificada\n"
         comment += "```sql\n"
         comment += unified_query
         comment += "\n```\n"
-
         issue.create_comment(comment)
         logger.info(f"Comentário postado na issue #{issue_number}")
     
