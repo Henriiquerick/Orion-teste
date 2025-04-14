@@ -160,17 +160,12 @@ class OrionQueryUnifier:
     
     def _wait_for_query_completion(self, query_execution_id: str) -> str:
         """
-        Aguarda a conclusão de uma consulta Athena.
-        
-        Args:
-            query_execution_id: ID da execução da consulta
-            
-        Returns:
-            Status final da consulta
+        Aguarda a conclusão de uma consulta Athena com backoff exponencial.
         """
         state = 'RUNNING'
-        max_retries = 50  # Evita loop infinito
+        max_retries = 10
         retries = 0
+        wait_time = 1  # tempo inicial em segundos
         
         while state in ['RUNNING', 'QUEUED'] and retries < max_retries:
             query_status = self.athena_client.get_query_execution(QueryExecutionId=query_execution_id)
@@ -183,9 +178,11 @@ class OrionQueryUnifier:
             
             if state == 'SUCCEEDED':
                 break
-                
+                    
             retries += 1
-            time.sleep(1)  # Aguarda 1 segundo entre verificações
+            self.logger(f"⏳ Aguardando resultado ({wait_time}s)...")
+            time.sleep(wait_time)
+            wait_time = min(wait_time * 2, 30)  # duplica o tempo de espera até máximo de 30s
         
         return state
     
@@ -202,6 +199,13 @@ class OrionQueryUnifier:
             - Conjunto de todas as colunas encontradas em todas as tabelas
         """
         self.logger("🔍 Analisando schemas de tabelas...")
+    
+        if not schemas:
+            self.logger("❌ Nenhum schema fornecido para análise")
+            return {}, set()
+        
+        if not all(schema.get('columns') for schema in schemas):
+            self.logger("⚠️ Alguns schemas não contêm informações de colunas")
         
         # Mapeia colunas para seus tipos em diferentes tabelas
         column_types: Dict[str, List[str]] = {}
@@ -237,12 +241,12 @@ class OrionQueryUnifier:
         return column_types, all_columns
     
     def generate_unified_query(self, 
-                           table_names: List[str], 
-                           database: str,
-                           column_types: Dict[str, List[str]], 
-                           all_columns: Set[str]) -> str:
+                        table_names: List[str], 
+                        database: str,
+                        column_types: Dict[str, List[str]], 
+                        all_columns: Set[str]) -> str:
         """
-        Gera uma consulta SQL unificada otimizada para o Athena.
+        Gera uma consulta SQL unificada otimizada para o Athena usando UNION ALL.
         
         Args:
             table_names: Lista de nomes de tabelas
@@ -251,96 +255,104 @@ class OrionQueryUnifier:
             all_columns: Conjunto de todas as colunas
             
         Returns:
-            Query SQL unificada
+            Query SQL unificada otimizada
         """
-        self.logger("🔧 Gerando consulta unificada...")
+        self.logger("🔧 Gerando consulta unificada otimizada...")
         
-        # Gera CTE para cada tabela
-        cte_statements = []
-        final_column_parts = []
+        # Extraí a lógica de determinação de tipo para um método auxiliar
+        column_final_types = self._determine_column_types(column_types)
         
-        # Determina o tipo de dados ideal para cada coluna
+        # Gera subqueries para cada tabela
+        table_queries = []
+        
+        for table in table_names:
+            column_expressions = []
+            
+            # Para cada coluna, adiciona expressão de seleção com tratamento de nulos e cast apropriado
+            for col in sorted(all_columns):
+                final_type = column_final_types.get(col, 'string')
+                
+                # Verifica se a coluna existe na tabela (casos onde algumas tabelas podem não ter todas as colunas)
+                # Usando CASE WHEN para tratamento mais seguro
+                column_expr = f"""CASE 
+                    WHEN {col} IS NOT NULL THEN {self._get_cast_expression(col, final_type)}
+                    ELSE NULL 
+                END AS {col}"""
+                
+                column_expressions.append(column_expr)
+            
+            # Constrói a subquery para esta tabela
+            table_query = f"""SELECT 
+            {', '.join(column_expressions)}
+            FROM {database}.{table}"""
+            
+            table_queries.append(table_query)
+        
+        # Constrói a consulta final usando UNION ALL para combinar os resultados
+        # Isso é mais eficiente que um FULL OUTER JOIN com produto cartesiano
+        query = f"""/* Orion SQL Query Unifier - Consulta Otimizada */
+        {" UNION ALL ".join(table_queries)}"""
+        
+        self.logger("✅ Consulta unificada gerada com sucesso!")
+        return query
+
+    def _determine_column_types(self, column_types: Dict[str, List[str]]) -> Dict[str, str]:
+        """
+        Determina o tipo de dados ideal para cada coluna.
+        
+        Args:
+            column_types: Mapeamento de colunas para seus possíveis tipos
+            
+        Returns:
+            Dicionário com o tipo final determinado para cada coluna
+        """
         column_final_types = {}
+        
         for col, types in column_types.items():
             # Determina o tipo mais apropriado para cada coluna
-            if 'string' in types:
+            if 'string' in types or 'varchar' in types:
                 # Se tiver string, converte tudo para string para compatibilidade
                 column_final_types[col] = 'string'
-            elif 'double' in types or 'float' in types:
-                # Se tiver double ou float, converte números para double
+            elif 'double' in types:
+                # Prefere double para precisão se disponível
                 column_final_types[col] = 'double'
-            elif 'integer' in types or 'int' in types or 'bigint' in types:
-                # Se tiver apenas inteiros, usa bigint
+            elif 'float' in types:
+                column_final_types[col] = 'float'
+            elif 'decimal' in types:
+                column_final_types[col] = 'decimal'
+            elif 'bigint' in types:
                 column_final_types[col] = 'bigint'
+            elif 'integer' in types or 'int' in types:
+                column_final_types[col] = 'integer'
             elif 'boolean' in types:
                 column_final_types[col] = 'boolean'
-            elif 'date' in types or 'timestamp' in types:
-                # Para datas, prefere timestamp se disponível
-                column_final_types[col] = 'timestamp' if 'timestamp' in types else 'date'
+            elif 'timestamp' in types:
+                column_final_types[col] = 'timestamp'
+            elif 'date' in types:
+                column_final_types[col] = 'date'
             else:
                 # Para outros tipos, usa o primeiro tipo encontrado
                 column_final_types[col] = types[0]
         
-        # Gera a parte COALESCE para a consulta final
-        for col in sorted(all_columns):
-            final_type = column_final_types.get(col, 'string')
-            cast_parts = []
-            
-            # Cria partes CAST para cada tabela/CTE
-            for i, table in enumerate(table_names):
-                cte_name = f"cte_{i}"
-                cast_parts.append(f"{cte_name}.{col}")
-            
-            # Usa COALESCE para pegar o primeiro valor não nulo
-            coalesce_stmt = f"COALESCE({', '.join(cast_parts)})"
-            
-            # Se necessário, adiciona CAST para converter ao tipo final
-            if final_type not in ['string', 'varchar']:
-                final_column_parts.append(f"CAST({coalesce_stmt} AS {final_type}) AS {col}")
-            else:
-                final_column_parts.append(f"{coalesce_stmt} AS {col}")
-        
-        # Gera as CTEs para cada tabela
-        for i, table in enumerate(table_names):
-            cte_name = f"cte_{i}"
-            select_parts = []
-            
-            # Para cada coluna possível, adiciona a coluna ou NULL
-            for col in sorted(all_columns):
-                select_parts.append(f"{col}")
-            
-            # Constrói a CTE completa
-            cte_query = f"""
-{cte_name} AS (
-    SELECT 
-        {', '.join(select_parts)}
-    FROM {database}.{table}
-)"""
-            cte_statements.append(cte_query)
-        
-        # Constrói a consulta final
-        joins = []
-        first_cte = f"cte_0"
-        
-        # Cria JOINs para as tabelas restantes
-        for i in range(1, len(table_names)):
-            cte_name = f"cte_{i}"
-            # Usando FULL OUTER JOIN para incluir todas as linhas de todas as tabelas
-            joins.append(f"FULL OUTER JOIN {cte_name} ON 1=1")  # Join sem condição para fazer produto cartesiano
-        
-        # Constrói a consulta SQL completa
-        query = f"""WITH 
-{', '.join(cte_statements)}
-
-SELECT
-    {', '.join(final_column_parts)}
-FROM {first_cte}
-{' '.join(joins)}
-"""
-        
-        self.logger("✅ Consulta unificada gerada com sucesso!")
-        return query
+        return column_final_types
     
+    def _get_cast_expression(self, column: str, target_type: str) -> str:
+        """
+        Gera uma expressão CAST apropriada para converter uma coluna para o tipo alvo.
+        
+        Args:
+            column: Nome da coluna
+            target_type: Tipo alvo para conversão
+            
+        Returns:
+            Expressão SQL de CAST
+        """
+        # Para tipos específicos, podemos adicionar lógica especial de conversão se necessário
+        if target_type in ['string', 'varchar']:
+            return column  # String não precisa de cast explícito em muitos casos
+        else:
+            return f"CAST({column} AS {target_type})"
+
     def execute_pipeline(self, 
                       access_key: str, 
                       secret_key: str, 
@@ -700,5 +712,39 @@ def execute_cli_pipeline():
 
 def main():
     """Função principal que inicia a aplicação."""
-    # Verifica se está sendo executado em modo CLI ou GUI
     import sys
+    import argparse
+    
+    # Verifica se está sendo executado em modo CLI ou GUI
+    if len(sys.argv) > 1:
+        try:
+            sys.exit(execute_cli_pipeline())
+        except Exception as e:
+            print(f"Erro ao executar no modo CLI: {e}")
+            sys.exit(1)
+    else:
+        try:
+            # Verifica se tkinter está disponível
+            import tkinter as tk
+            root = tk.Tk()
+            root.title("Orion SQL Query Unifier")
+            
+            # Adiciona ícone se disponível
+            try:
+                root.iconbitmap("orion_icon.ico")
+            except:
+                pass  # Ignora se o ícone não estiver disponível
+                
+            app = OrionGUI(root)
+            root.mainloop()
+        except ImportError:
+            print("Erro: Tkinter não está instalado. Não é possível iniciar a interface gráfica.")
+            print("Use o modo CLI ou instale o pacote tkinter.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Erro ao iniciar a interface gráfica: {e}")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
